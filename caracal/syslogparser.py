@@ -627,6 +627,7 @@ class SyslogParser:
                     data = line['rawmsg']
                     fields = data.split(" ")
                     # Assuming 'ADC' line format where temperature is the 3rd field
+                    # ADC T 15347 Vref 24117 Vbatt(raw) 27830 Vbatt 6.465419 (V)
                     temp_field = int(fields[2])
                     temp_profile.append(temp_field)
                     sys_times.append(line['sysTime'])
