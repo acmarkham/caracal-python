@@ -15,6 +15,8 @@ from .inventorybuilder import CaracalInventory
 from .syslogparser import Identity, Stats, AudioFile, Header, Session, SyslogContainer
 from .position import NamedLocation, NamedLocationLoader, OverrideLoader
 
+import traceback
+
 
 # Container for multiple audio data returns
 @dataclass
@@ -431,6 +433,55 @@ class DataGetter:
         # Then convert to unix timestamps
         utc = utc_dt.timestamp()
         return utc
+    
+
+    @staticmethod
+    def __vectorized_unpack(dat):
+        '''Internal vectorized function to inflate a packed wave file into four channels'''
+        dat_int = dat.astype(np.int32)
+
+        # Predefine masks as np.uint32 for speed and clarity
+        MASK_A = np.uint32(0xFFFFFE00)
+        MASK_B = np.uint32(0xFFF00000)
+        MASK_C = np.uint32(0x000FFF00)
+        MASK_D1 = np.uint32(0x000000FF)
+        MASK_D2 = np.uint32(0x0F)
+        MASK_GAIN = np.uint32(0x1F0)
+
+        # Split dat_int into two separate columns
+        d0 = dat_int[:, 0].astype(np.uint32)
+        d1 = dat_int[:, 1].astype(np.uint32)
+
+        # Vectorized unpacking
+        ch_a = d0 & MASK_A
+        ch_b = (d1 & MASK_B) >> 20
+        ch_c = (d1 & MASK_C) >> 8
+        ch_d = ((d1 & MASK_D1) << 4) | (d0 & MASK_D2)
+        gain = (d0 & MASK_GAIN) >> 4
+
+        # Unsigned to signed conversion (manual sign extension)
+        ch_a = (ch_a ^ np.uint32(0x80000000)) - np.uint32(0x80000000)
+        ch_a = ch_a.view(np.int32)
+        ch_b = (ch_b ^ np.uint32(0x800)) - np.uint32(0x800)
+        ch_b = ch_b.view(np.int32)
+        ch_c = (ch_c ^ np.uint32(0x800)) - np.uint32(0x800)
+        ch_c = ch_c.view(np.int32)
+        ch_d = (ch_d ^ np.uint32(0x800)) - np.uint32(0x800)
+        ch_d = ch_d.view(np.int32)
+
+        # Apply gain as exponent
+        gain_array = gain.astype(np.float32)
+        scale = np.power(2.0, gain_array)
+
+        ch_b = ch_b * scale
+        ch_c = ch_c * scale
+        ch_d = ch_d * scale
+
+        # Stack into final output array with channel order: [ch_a, ch_b, ch_d, ch_c]
+        new_dat = np.stack([ch_a, ch_b, ch_d, ch_c], axis=-1).astype(np.int32)
+
+        return new_dat, gain_array
+
 
     @staticmethod
     def __unpack(datx):
@@ -521,7 +572,7 @@ class DataGetter:
                     # explicit int32 for bit manipulation
                     audio_section = track.read(frames_to_read,dtype='int32')
                     print(np.shape(audio_section))
-                    quad_audio, gain = DataGetter.__unpack(audio_section)
+                    quad_audio, gain = DataGetter.__vectorized_unpack(audio_section)
                     print(np.shape(quad_audio))
                     # scaling back to float64 [-1,1] range
                     audio_float = np.array(quad_audio).astype(np.float64)
@@ -531,6 +582,7 @@ class DataGetter:
                     raise ValueError("Audio mode must be 'mono' or 'quad'")
         except Exception as e:
             print(f"Failed to load WAV file '{filename}': {e}")
+            traceback.print_exc()
             raise
 
     @staticmethod
