@@ -2,7 +2,7 @@ import numpy as np
 import os
 from dataclasses import dataclass, field, InitVar
 
-@dataclass
+@dataclass(frozen=True) # Added frozen=True to make instances hashable and immutable
 class Identity:
     """
     Represents the unique identity information of a device and SD card.
