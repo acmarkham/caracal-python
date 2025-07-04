@@ -39,7 +39,7 @@ class InventoryBuilder:
         self.rootdir: str | None = None
         self.inventory: CaracalInventory = CaracalInventory() # Initialize with an empty CaracalInventory
 
-    def build(self, rootdir: str, comments: str = "") -> CaracalInventory:
+    def build(self, rootdir: str, comments: str = "", detailed_PPS: bool = False) -> CaracalInventory:
         """
         Runs the data-crawling process to find and parse syslog files,
         building a data index encapsulated in a CaracalInventory object.
@@ -49,6 +49,7 @@ class InventoryBuilder:
         Args:
             rootdir (str): The root directory path to explore for syslog files.
             comments (str, optional): Additional comments to store with the inventory.
+            detailed_PPS (bool, optional): If True, enables detailed PPS (Packets Per Second) statistics for precision timing correction. Makes pkl much larger.
 
         Returns:
             CaracalInventory: An instance of CaracalInventory containing
@@ -64,7 +65,7 @@ class InventoryBuilder:
         for syslog_path in tqdm(syslogs, desc="Parsing syslogs"):
             # print(f"Parsing: {syslog_path}") # Removed to avoid cluttering progress bar output
             parser = SyslogParser(syslog_path)
-            syslog_container = parser.process()
+            syslog_container = parser.process(detailed_PPS=detailed_PPS)
 
             if syslog_container:
                 relative_path = os.path.relpath(syslog_container.path, self.rootdir)

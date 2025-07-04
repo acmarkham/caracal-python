@@ -115,21 +115,26 @@ class CaracalQuery:
             print("No stations to merge.")
             return
 
-        # Group stations by their headerID
-        grouped_stations: dict[Identity, list[CaracalAudioData]] = {}
+        # Group stations by their headerID.
+        # Create a hashable representation of Identity for use as dictionary key.
+        grouped_stations: dict[tuple, list[CaracalAudioData]] = {}
         for station_data in self.stations:
-            # Ensure header and headerID exist before using as key
             if station_data.header and station_data.header.headerID:
-                header_id = station_data.header.headerID
-                if header_id not in grouped_stations:
-                    grouped_stations[header_id] = []
-                grouped_stations[header_id].append(station_data)
+                # Create a hashable tuple from the Identity object's attributes
+                header_id_tuple = (
+                    station_data.header.headerID.cardID,
+                    station_data.header.headerID.deviceID,
+                    station_data.header.headerID.versionHash
+                )
+                if header_id_tuple not in grouped_stations:
+                    grouped_stations[header_id_tuple] = []
+                grouped_stations[header_id_tuple].append(station_data)
             else:
                 print(f"WARNING: Skipping station {station_data.path} due to missing or invalid headerID for merging.")
 
         new_stations: list[CaracalAudioData] = []
 
-        for header_id, group in grouped_stations.items():
+        for header_id_tuple, group in grouped_stations.items():
             if len(group) == 1:
                 # No merging needed for single-item groups
                 new_stations.append(group[0])
@@ -175,7 +180,7 @@ class CaracalQuery:
                     elif all_audio_arrays[0].ndim == 2: # Quad
                         merged_audio_data.audioData = np.concatenate(all_audio_arrays, axis=0)
                     else:
-                        print(f"WARNING: Cannot concatenate audio data for headerID {header_id} due to unsupported dimensions: {all_audio_arrays[0].ndim}")
+                        print(f"WARNING: Cannot concatenate audio data for headerID {header_id_tuple} due to unsupported dimensions: {all_audio_arrays[0].ndim}")
                         merged_audio_data.audioData = None # Invalidate audioData if concatenation fails
                         continue # Skip adding this merged data if concatenation failed
 
@@ -197,12 +202,13 @@ class CaracalQuery:
                     new_stations.append(merged_audio_data)
 
                 except Exception as e:
-                    print(f"ERROR: Failed to concatenate audio for headerID {header_id}: {e}")
+                    print(f"ERROR: Failed to concatenate audio for headerID {header_id_tuple}: {e}")
             else:
-                print(f"WARNING: No valid audio arrays to concatenate for headerID {header_id}.")
+                print(f"WARNING: No valid audio arrays to concatenate for headerID {header_id_tuple}.")
 
         self.stations = new_stations
         print(f"Merged stations. Original count: {len(grouped_stations)} unique stations. New count: {len(self.stations)}.")
+
 
 
 # Container for single station's data
