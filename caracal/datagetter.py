@@ -30,30 +30,89 @@ class CaracalQuery:
     def saveWav(self, filename: str):
         """
         Saves all audio data from all stations in this container into a single
-        multi-channel WAV file. If there's only one station, it saves a mono/quad WAV.
-        If there are multiple stations, it attempts to concatenate them if they have
-        the same sample rate and duration, or saves them individually if not.
-        For simplicity, this implementation saves each station's audio as a separate
-        file, named with an index.
+        multi-channel WAV file. Each station's audio data forms one or more
+        channels in the output file. If a station has quadraphonic data, it
+        will contribute four channels. All audio data must have the same sample rate.
 
         Args:
-            filename (str): The base filename (without extension) for saving.
-                            Individual files will be named like 'filename_0.wav', 'filename_1.wav', etc.
+            filename (str): The filename (with or without extension) for saving.
         """
         if not self.stations:
             print("No audio data to save.")
             return
 
-        for i, caracal_audio in enumerate(self.stations):
+        # Determine the common sample rate and check for consistency
+        sample_rate = None
+        for caracal_audio in self.stations:
             if caracal_audio.audioData is not None and caracal_audio.sampleRate > 0:
-                output_filename = f"{filename}_{i}.wav"
-                try:
-                    sf.write(output_filename, caracal_audio.audioData, caracal_audio.sampleRate)
-                    print(f"Saved audio for station {i} to {output_filename}")
-                except Exception as e:
-                    print(f"Error saving audio for station {i} to {output_filename}: {e}")
+                if sample_rate is None:
+                    sample_rate = caracal_audio.sampleRate
+                elif sample_rate != caracal_audio.sampleRate:
+                    print(f"Error: Mismatched sample rates detected. Cannot save to a single multi-channel WAV.")
+                    print(f"Station {caracal_audio.stationName} has sample rate {caracal_audio.sampleRate}, expected {sample_rate}.")
+                    return
             else:
-                print(f"No valid audio data for station {i} to save.")
+                print(f"Warning: Station {caracal_audio.stationName} has no valid audio data or sample rate, skipping.")
+
+        if sample_rate is None:
+            print("No valid audio data found across all stations to save.")
+            return
+
+        # Prepare data for concatenation and determine max length
+        all_channels_data = []
+        max_frames = 0
+
+        for caracal_audio in self.stations:
+            if caracal_audio.audioData is not None and caracal_audio.sampleRate == sample_rate:
+                current_audio = caracal_audio.audioData
+
+                # Ensure data is 2D (samples, channels) for consistent concatenation
+                if current_audio.ndim == 1:
+                    # Mono: reshape to (samples, 1)
+                    current_audio = current_audio[:, np.newaxis]
+                elif current_audio.ndim == 2:
+                    # Quad or multi-channel: already (samples, channels)
+                    pass
+                else:
+                    print(f"Warning: Skipping station {caracal_audio.stationName} due to unsupported audio data dimensions ({current_audio.ndim}).")
+                    continue
+                
+                all_channels_data.append(current_audio)
+                max_frames = max(max_frames, current_audio.shape[0])
+            else:
+                if caracal_audio.audioData is None:
+                    print(f"Warning: Station {caracal_audio.stationName} has no audio data to save.")
+                elif caracal_audio.sampleRate != sample_rate:
+                     # This case is already handled by the initial check, but good to have a fallback message
+                    print(f"Warning: Skipping station {caracal_audio.stationName} due to mismatched sample rate.")
+
+        if not all_channels_data:
+            print("No valid audio data to combine for multi-channel WAV.")
+            return
+
+        # Pad shorter audio segments with zeros to match the longest segment
+        padded_channels = []
+        for channel_data in all_channels_data:
+            num_frames_to_pad = max_frames - channel_data.shape[0]
+            if num_frames_to_pad > 0:
+                # Pad with zeros at the end
+                padding = np.zeros((num_frames_to_pad, channel_data.shape[1]), dtype=channel_data.dtype)
+                padded_channels.append(np.vstack((channel_data, padding)))
+            else:
+                padded_channels.append(channel_data)
+        
+        # Concatenate all channels horizontally
+        try:
+            combined_audio_data = np.hstack(padded_channels)
+            
+            # Ensure the filename has a .wav extension
+            if not filename.lower().endswith('.wav'):
+                filename = f"{filename}.wav"
+
+            sf.write(filename, combined_audio_data, sample_rate)
+            print(f"Saved multi-channel audio for {len(self.stations)} stations to {filename}")
+        except Exception as e:
+            print(f"Error saving multi-channel audio to {filename}: {e}")
 
     def to_obspy_stream(self) -> obspy.Stream:
         """
