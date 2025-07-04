@@ -193,11 +193,10 @@ class CaracalQuery:
                     merged_audio_data.audioFile = AudioFile(
                         utcTime=float(min_utc_start),
                         duration=float(max_utc_end - min_utc_start),
-                        subpath="merged_data_segment", # Indicate it's a merged segment
-                        filename="merged_audio"
+                        subpath="merged_data_segment" # Indicate it's a merged segment
                     )
                     merged_audio_data.sampleRate = sample_rate # Ensure sample rate is consistent
-                    merged_audio_data.locationMatch = "Merged" # Indicate it's merged data
+                    merged_audio_data.locationMatch = group[0].locationMatch # Indicate it's merged data
                     
                     new_stations.append(merged_audio_data)
 
@@ -273,7 +272,8 @@ class DataGetter:
                  locationinfo: str | None = None, # Made optional
                  timezone: str = "UTC",
                  audio_mode: str = 'mono',
-                 overrideinfo: str | None = None):
+                 overrideinfo: str | None = None,
+                 merge: bool = False):
         """
         Initializes a DataGetter instance.
 
@@ -290,6 +290,7 @@ class DataGetter:
                               quad' for four channels. Defaults to 'mono'.
             overrideinfo (str, optional): Path to a CSV file for overriding semantic/surveyed locations.
                                           Used by OverrideLoader. Defaults to None.
+            merge (bool): If True, will attempt to merge contiguous audio segments from the same station e.g. if they span an hourly boundary. This does remove detailed timing information.
 
         Raises:
             ValueError: If an invalid `audio_mode` is provided.
@@ -297,6 +298,7 @@ class DataGetter:
         self.rootpath = rootpath
         self.loc: NamedLocationLoader | None = None
         self.override: OverrideLoader | None = None
+        self.merge = merge
 
         if audio_mode not in ['mono', 'quad']:
             raise ValueError("Audio mode must be 'mono' or 'quad'")
@@ -703,6 +705,116 @@ class DataGetter:
                         all_matching_audio_data.extend(multi_audio_data.stations)
         
         return CaracalQuery(stations=all_matching_audio_data)
+    
+
+    def load_around_latlon(self, lat: float, lon: float,
+                           start_time: float | datetime.datetime, end_time: float | datetime.datetime,
+                           radius: float = 1000.0) -> CaracalQuery:
+        """
+        Loads audio data from *all* stations within a specified geographical radius
+        and time range. This method does not use `location_threshold` for filtering
+        individual sessions but rather `radius` for a broader spatial query.
+
+        Args:
+            lat (float): Latitude in decimal degrees.
+            lon (float): Longitude in decimal degrees.
+            start_time (float | datetime.datetime): UTC Unix timestamp (seconds) or datetime object
+                                                    for the start of the desired audio.
+            end_time (float | datetime.datetime): UTC Unix timestamp (seconds) or datetime object
+                                                  for the end of the desired audio.
+            radius (float): The query radius in meters. Defaults to 1000.0 m.
+
+        Returns:
+            CaracalQuery: A container with all matching CaracalAudioData instances.
+        """
+        # Convert datetime objects to UTC timestamps if necessary
+        if isinstance(start_time, datetime.datetime):
+            start_time = self.__convert_datetime_to_utc_timestamp(start_time)
+        if isinstance(end_time, datetime.datetime):
+            end_time = self.__convert_datetime_to_utc_timestamp(end_time)
+
+        all_matching_audio_data: list[CaracalAudioData] = []
+        processed_session_paths: set[str] = set() # To avoid duplicate processing
+
+        for syslog_container in self.sys:
+            for session in syslog_container.sessions:
+                if session.path in processed_session_paths:
+                    continue # Already processed this session
+
+                median_lon = session.header.stats.median_GPS_lon
+                median_lat = session.header.stats.median_GPS_lat
+
+                # Initialize session times to values that won't match if data is bad
+                session_start_time = float('inf')
+                session_end_time = float('-inf')
+
+                if session.audioFiles:
+                    try:
+                        # Explicitly cast to float for safety
+                        first_file_utc = float(session.audioFiles[0].utcTime)
+                        last_file_utc = float(session.audioFiles[-1].utcTime)
+                        last_file_duration = float(session.audioFiles[-1].duration)
+                        session_start_time = first_file_utc
+                        session_end_time = last_file_utc + last_file_duration
+                    except (ValueError, TypeError) as e:
+                        print(f"WARNING: Skipping session {session.path} due to corrupted audio file time data: {e}")
+                        continue # Skip to the next session if time data is bad
+
+                delta_lon_m = (median_lon - lon) * self.DEGREES_TO_METRES
+                delta_lat_m = (median_lat - lat) * self.DEGREES_TO_METRES
+                total_range = np.sqrt(delta_lon_m**2 + delta_lat_m**2)
+
+                if total_range < radius:
+                    # Session's GPS location is within the radius, now check time overlap
+                    if max(start_time, session_start_time) < min(end_time, session_end_time):
+                        multi_audio_data = self.get_audio_from_session(session, start_time, end_time)
+                        for audio_data_item in multi_audio_data.stations:
+                            audio_data_item.locationMatch = 'FromDevice' # Default for load_around
+                            all_matching_audio_data.append(audio_data_item)
+                        processed_session_paths.add(session.path) # Mark as processed
+
+        # Apply override logic as well, for sessions that might not have GPS or are better located by override
+        if self.override is not None and self.loc is not None:
+            for syslog_container in self.sys:
+                for session in syslog_container.sessions:
+                    if session.path in processed_session_paths:
+                        continue # Already processed this session
+
+                    session_name_from_override = self.override.getNameFromPath(session.path)
+                    if session_name_from_override:
+                        surveyed_pos = self.loc.fromName(session_name_from_override)
+                        if surveyed_pos:
+                            delta_lon_m = (surveyed_pos.lon - lon) * self.DEGREES_TO_METRES
+                            delta_lat_m = (surveyed_pos.lat - lat) * self.DEGREES_TO_METRES
+                            total_range = np.sqrt(delta_lon_m**2 + delta_lat_m**2)
+
+                            if total_range < radius:
+                                # Initialize session times to values that won't match if data is bad
+                                session_start_time = float('inf')
+                                session_end_time = float('-inf')
+
+                                if session.audioFiles:
+                                    try:
+                                        # Explicitly cast to float for safety
+                                        first_file_utc = float(session.audioFiles[0].utcTime)
+                                        last_file_utc = float(session.audioFiles[-1].utcTime)
+                                        last_file_duration = float(session.audioFiles[-1].duration)
+                                        session_start_time = first_file_utc
+                                        session_end_time = last_file_utc + last_file_duration
+                                    except (ValueError, TypeError) as e:
+                                        print(f"WARNING: Skipping session {session.path} due to corrupted audio file time data: {e}")
+                                        continue # Skip to the next session if time data is bad
+
+                                # Session's override location is within radius, check time overlap
+                                if max(start_time, session_start_time) < min(end_time, session_end_time):
+                                    multi_audio_data = self.get_audio_from_session(session, start_time, end_time)
+                                    for audio_data_item in multi_audio_data.stations:
+                                        audio_data_item.locationMatch = 'FromOverride'
+                                        audio_data_item.stationName = session_name_from_override # Set station name from override
+                                        all_matching_audio_data.append(audio_data_item)
+                                    processed_session_paths.add(session.path) # Mark as processed
+
+        return CaracalQuery(stations=all_matching_audio_data)
 
 
     def load_from_latlon(self, lat: float, lon: float,
@@ -811,8 +923,9 @@ class DataGetter:
                                         audio_data_item.locationMatch = 'FromOverride'
                                         audio_data_item.stationName = session_name_from_override # Set station name from override
                                         all_matching_audio_data.append(audio_data_item)
-                                    processed_session_paths.add(session.path) # Mark as processed
-
+                                    matched_session_paths.add(session.path) # Mark as processed
+        if self.merge:
+            return  CaracalQuery(stations=all_matching_audio_data).merge()
         return CaracalQuery(stations=all_matching_audio_data)
 
 
