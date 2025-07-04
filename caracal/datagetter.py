@@ -270,6 +270,48 @@ class CaracalQuery:
         self.stations = new_stations
         print(f"Merged stations. Original count: {len(grouped_stations)} unique stations. New count: {len(self.stations)}.")
 
+    
+    def save(self, filename: str):
+        """
+        Saves the CaracalQuery object to a file using pickle.
+
+        Args:
+            filename (str): The path and filename to save the pickled object.
+        """
+        try:
+            with open(filename, 'wb') as f:
+                pickle.dump(self, f)
+            print(f"CaracalQuery successfully saved to: {filename}")
+        except Exception as e:
+            print(f"ERROR: Failed to save CaracalQuery to {filename}: {e}")
+
+    @staticmethod
+    def load(filename: str):
+        """
+        Loads a CaracalQuery object from a pickled file.
+
+        Args:
+            filename (str): The path and filename of the pickled CaracalQuery file.
+
+        Returns:
+            CaracaCaracalQuerylQuery | None: The loaded CaracalQuery object, or None if loading fails.
+        """
+        try:
+            with open(filename, 'rb') as f:
+                query = pickle.load(f)
+            if isinstance(query, CaracalQuery):
+                print(f"CaracalQuery successfully loaded from: {filename}")
+                return query
+            else:
+                print(f"ERROR: Loaded object from {filename} is not a CaracalQuery instance.")
+                return None
+        except FileNotFoundError:
+            print(f"ERROR: CaracalQuery file not found: {filename}")
+            return None
+        except Exception as e:
+            print(f"ERROR: Failed to load CaracalQuery from {filename}: {e}")
+            return None
+
 
 
 # Container for single station's data

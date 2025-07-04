@@ -1,6 +1,6 @@
 # caracal/__init__.py
 
-from .datagetter import DataGetter
+from .datagetter import DataGetter, CaracalQuery
 from .inventorybuilder import InventoryBuilder, CaracalInventory
 from .position import NamedLocation, NamedLocationLoader, OverrideLoader, Position
 from .syslogparser import Identity, Stats, AudioFile, Header, Session, SyslogContainer, SyslogParser
