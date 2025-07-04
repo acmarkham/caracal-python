@@ -15,6 +15,7 @@ from .inventorybuilder import CaracalInventory
 from .syslogparser import Identity, Stats, AudioFile, Header, Session, SyslogContainer
 from .position import NamedLocation, NamedLocationLoader, OverrideLoader
 
+
 # Container for multiple audio data returns
 @dataclass
 class CaracalQuery:
@@ -432,55 +433,39 @@ class DataGetter:
         return utc
 
     @staticmethod
-    def __unpack(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Internal function to inflate a packed 2-channel (int32) wave file
-        into four 16-bit channels with gain applied.
-        Assumes input `data` is a NumPy array of shape (num_samples, 2) and dtype int32.
-
-        Args:
-            data (np.ndarray): Packed audio data as a NumPy array (num_samples, 2), dtype int32.
-
-        Returns:
-            tuple[np.ndarray, np.ndarray]: A tuple containing:
-                - new_data (np.ndarray): Unpacked 4-channel audio data (num_samples, 4), dtype int32.
-                - gain_array (np.ndarray): Array of gain values for each sample.
-        """
-        num_samples = data.shape[0]
-        new_data = np.empty((num_samples, 4), dtype=np.int32)
-        gain_array = np.empty(num_samples, dtype=np.float32) # Use float32 for gain
-
-        # Ensure data is int32 for bit manipulation
-        data_int = data.astype(np.int32)
-
+    def __unpack(datx):
+        '''Internal function to inflate a packed wave file into four channels'''
+        num_samples = np.shape(datx)[0]
+        new_dat = np.empty((num_samples,4),dtype=np.int32)
+        gain_array = np.empty(num_samples)
+        dat_int = datx.astype(np.int32,copy=True)
+        MASK_A = np.uint32(0xFFFFFE00)
+        MASK_B = np.uint32(0xFFF00000)
+        MASK_C = np.uint32(0x000FFF00)
+        MASK_D1 = np.uint32(0x000000FF)
+        MASK_D0 = np.uint32(0x0F)
+        MASK_GAIN = np.uint32(0x1f0)
         for idx in np.arange(num_samples):
-            d0 = data_int[idx, 0]
-            d1 = data_int[idx, 1]
-
-            # Extract channels and gain from packed 32-bit integers
-            ch_a = (d0 & 0xFFFFFE00)
-            ch_b = (d1 & 0xFFF00000) >> 20
-            ch_c = (d1 & 0x000FFF00) >> 8
-            ch_d = ((d1 & 0x000000FF) << 4) | ((d0 & 0x0F0) >> 4) # Corrected d0 & 0x0F to d0 & 0x0F0 >> 4
-            gain = (d0 & 0x1F0) >> 4 # 5 bits for gain
-
-            # Signed conversion for the mantissa (12-bit signed for B, C, D; 23-bit signed for A)
-            ch_a = (ch_a ^ 0x80000000) - 0x80000000 if ch_a & 0x80000000 else ch_a # 32-bit signed
-            ch_b = (ch_b ^ 0x800) - 0x800 if ch_b & 0x800 else ch_b # 12-bit signed
-            ch_c = (ch_c ^ 0x800) - 0x800 if ch_c & 0x800 else ch_c # 12-bit signed
-            ch_d = (ch_d ^ 0x800) - 0x800 if ch_d & 0x800 else ch_d # 12-bit signed
-
-            # Apply exponent (gain) to channels B, C, D
-            # Note: 2**gain can be large, ensure types handle it
-            ch_b = ch_b * (2**gain)
-            ch_c = ch_c * (2**gain)
-            ch_d = ch_d * (2**gain)
-
-            # ACM 16APR24 - update the unpacker to get the angles in order: mic_angle = [0,90,180,270]
-            # Assuming original order was A, B, C, D and desired is A, B, D, C for 0, 90, 270, 180
-            new_data[idx, :] = [ch_a, ch_b, ch_d, ch_c]
+            d = dat_int[idx]
+            ch_a = d[0]& MASK_A
+            ch_b = (d[1]& MASK_B)>>20
+            ch_c = (d[1]& MASK_C)>>8
+            ch_d = (d[1]&MASK_D1)<<4 | (d[0]&MASK_D0)
+            gain = (d[0]&MASK_GAIN)>>4
+            # unsigned to signed conversion for the mantissa
+            ch_a = (ch_a ^ 0x80000000) - 0x80000000
+            ch_b = (ch_b ^ 0x800) - 0x800
+            ch_c = (ch_c ^ 0x800) - 0x800
+            ch_d = (ch_d ^ 0x800) - 0x800
+            # and now the exponent
+            ch_b = ch_b * 2**gain
+            ch_c = ch_c * 2**gain
+            ch_d = ch_d * 2**gain
+            # ACM 16APR24 - update the unpacker to get the angles in order:
+            #  mic_angle = [0,90,180,270]
+            new_dat[idx,:] = [ch_a,ch_b,ch_d,ch_c]
             gain_array[idx] = gain
-        return new_data, gain_array
+        return new_dat,gain_array
 
     @staticmethod
     def load_wav(filename: str, start_offset: float | None = None,
@@ -507,6 +492,7 @@ class DataGetter:
             ValueError: If `duration` is None or if `audio_mode` is invalid.
             Exception: If the file is not seekable or other soundfile errors occur.
         """
+        print("load_wav",audio_mode)
         if duration is None:
             raise ValueError("Need a duration to load audio.")
 
@@ -514,11 +500,11 @@ class DataGetter:
             with sf.SoundFile(filename, 'r') as track:
                 if not track.seekable():
                     raise ValueError(f"Audio file '{filename}' is not seekable.")
-
+                print(f"1.Loading WAV file '{filename}' with audio mode '{audio_mode}'.")
                 sr = track.samplerate
                 start_frame = int((start_offset or 0) * sr)
                 frames_to_read = int(sr * duration)
-
+                print(start_frame)
                 track.seek(start_frame)
 
                 if audio_mode == 'mono':
@@ -531,14 +517,16 @@ class DataGetter:
                         audio_data = audio_section
                     return sr, audio_data
                 elif audio_mode == 'quad':
-                    # Read raw packed data as int32
-                    audio_section = track.read(frames_to_read, dtype='int32')
+                    print("quad mode selected, reading 4 channels.")
+                    # explicit int32 for bit manipulation
+                    audio_section = track.read(frames_to_read,dtype='int32')
+                    print(np.shape(audio_section))
                     quad_audio, gain = DataGetter.__unpack(audio_section)
-                    # Scale to float64 [-1,1] range if needed, or keep as int32
-                    # For consistency with other audio libraries, often float is preferred.
-                    # Max value for int32 is 2**31 - 1, so divide by 2**31
-                    audio_scaled = quad_audio.astype(np.float64) / (2**31)
-                    return sr, audio_scaled
+                    print(np.shape(quad_audio))
+                    # scaling back to float64 [-1,1] range
+                    audio_float = np.array(quad_audio).astype(np.float64)
+                    audio_scaled = quad_audio/2**31
+                    return sr,audio_scaled
                 else:
                     raise ValueError("Audio mode must be 'mono' or 'quad'")
         except Exception as e:
@@ -640,7 +628,7 @@ class DataGetter:
             duration_to_load = segment_end_utc - segment_start_utc
 
             full_filename = os.path.join(self.rootpath, session.path, audiofile.subpath)
-
+            print(full_filename, offset_in_file, duration_to_load, self.audio_mode)
             try:
                 sr, aud = DataGetter.load_wav(full_filename,
                                               offset_in_file,
