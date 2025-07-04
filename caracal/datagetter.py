@@ -335,7 +335,8 @@ class DataGetter:
                  timezone: str = "UTC",
                  audio_mode: str = 'mono',
                  overrideinfo: str | None = None,
-                 merge: bool = False):
+                 merge: bool = False,
+                 gps_threshold: int = 100): # Added gps_threshold
         """
         Initializes a DataGetter instance.
 
@@ -353,6 +354,7 @@ class DataGetter:
             overrideinfo (str, optional): Path to a CSV file for overriding semantic/surveyed locations.
                                           Used by OverrideLoader. Defaults to None.
             merge (bool): If True, will attempt to merge contiguous audio segments from the same station e.g. if they span an hourly boundary. This does remove detailed timing information.
+            gps_threshold (int): The minimum number of GPS fixes required for a session to be included. Defaults to 100.
 
         Raises:
             ValueError: If an invalid `audio_mode` is provided.
@@ -361,6 +363,7 @@ class DataGetter:
         self.loc: NamedLocationLoader | None = None
         self.override: OverrideLoader | None = None
         self.merge = merge
+        self.GPS_THRESHOLD = gps_threshold # Set GPS threshold
 
         if audio_mode not in ['mono', 'quad']:
             raise ValueError("Audio mode must be 'mono' or 'quad'")
@@ -485,7 +488,7 @@ class DataGetter:
 
     @staticmethod
     def __unpack(datx):
-        '''Internal function to inflate a packed wave file into four channels'''
+        '''Internal function to inflate a packed wave file into four channels. Very slow. Loop based.'''
         num_samples = np.shape(datx)[0]
         new_dat = np.empty((num_samples,4),dtype=np.int32)
         gain_array = np.empty(num_samples)
@@ -543,7 +546,6 @@ class DataGetter:
             ValueError: If `duration` is None or if `audio_mode` is invalid.
             Exception: If the file is not seekable or other soundfile errors occur.
         """
-        print("load_wav",audio_mode)
         if duration is None:
             raise ValueError("Need a duration to load audio.")
 
@@ -551,11 +553,9 @@ class DataGetter:
             with sf.SoundFile(filename, 'r') as track:
                 if not track.seekable():
                     raise ValueError(f"Audio file '{filename}' is not seekable.")
-                print(f"1.Loading WAV file '{filename}' with audio mode '{audio_mode}'.")
                 sr = track.samplerate
                 start_frame = int((start_offset or 0) * sr)
                 frames_to_read = int(sr * duration)
-                print(start_frame)
                 track.seek(start_frame)
 
                 if audio_mode == 'mono':
@@ -568,12 +568,9 @@ class DataGetter:
                         audio_data = audio_section
                     return sr, audio_data
                 elif audio_mode == 'quad':
-                    print("quad mode selected, reading 4 channels.")
                     # explicit int32 for bit manipulation
                     audio_section = track.read(frames_to_read,dtype='int32')
-                    print(np.shape(audio_section))
                     quad_audio, gain = DataGetter.__vectorized_unpack(audio_section)
-                    print(np.shape(quad_audio))
                     # scaling back to float64 [-1,1] range
                     audio_float = np.array(quad_audio).astype(np.float64)
                     audio_scaled = quad_audio/2**31
@@ -680,7 +677,7 @@ class DataGetter:
             duration_to_load = segment_end_utc - segment_start_utc
 
             full_filename = os.path.join(self.rootpath, session.path, audiofile.subpath)
-            print(full_filename, offset_in_file, duration_to_load, self.audio_mode)
+
             try:
                 sr, aud = DataGetter.load_wav(full_filename,
                                               offset_in_file,
@@ -702,21 +699,21 @@ class DataGetter:
             except Exception as e:
                 print(f"Failed to get audio from {full_filename} for segment [{segment_start_utc}, {segment_end_utc}]: {e}")
         
-        # If multiple audio segments are found, attempt to concatenate them if they are contiguous
-        # and from the same logical "station" (e.g., same device ID, same sample rate).
-        # For now, we'll return them as separate CaracalAudioData instances within the list.
-        # A more advanced concatenation logic could be added here if needed,
-        # but for simplicity, each loaded segment becomes a distinct CaracalAudioData.
+        # Clean up - reject stations with poor fixes
+        clean_set = []
+        for idx, station in enumerate(matching_audio_data_list):
+            if station.header.stats.num_fixes is not None and station.header.stats.num_fixes > self.GPS_THRESHOLD:
+                if station.audioData is not None:
+                    clean_set.append(station)
+                    print(f"{idx}: adding: has {station.header.stats.num_fixes} fixes")
+                else:
+                    print(f"{idx}: skipping: not enough audio data")
+            else:
+                num_fixes_str = str(station.header.stats.num_fixes) if station.header.stats.num_fixes is not None else "None"
+                print(f"{idx}: skipping, only {num_fixes_str} fixes (threshold: {self.GPS_THRESHOLD})")
         
-        # If the user wants a single continuous audio stream, this is where concatenation would happen.
-        # For now, we return a list of individual segments.
-        # Example of simple concatenation if all segments are from the same station and contiguous:
-        # if len(matching_audio_data_list) > 1:
-        #     # Check for contiguity and same sample rate, then concatenate audioData
-        #     # This requires careful handling of timestamps and potential gaps/overlaps.
-        #     pass
-
-        return CaracalQuery(stations=matching_audio_data_list)
+        print(f"Retained data from {len(clean_set)} stations after GPS fix check.")
+        return CaracalQuery(stations=clean_set)
 
 
     def load_from_session(self, session: Session, start_time: float | datetime.datetime, end_time: float | datetime.datetime) -> CaracalQuery:
