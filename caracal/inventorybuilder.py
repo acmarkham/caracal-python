@@ -5,6 +5,7 @@ import pickle # Import pickle for saving/loading inventory
 import datetime # Import datetime for timestamping the inventory
 from dataclasses import dataclass, field # Import dataclass and field
 from tqdm import tqdm # Import tqdm for progress bar
+from io import BytesIO
 
 from .syslogparser import SyslogParser, SyslogContainer # Explicitly import SyslogContainer for type hinting
 
@@ -144,7 +145,7 @@ class InventoryBuilder:
         """
         try:
             with open(filename, 'rb') as f:
-                inventory = pickle.load(f)
+                inventory = pickle.load(BytesIO(f.read()))
             if isinstance(inventory, CaracalInventory):
                 print(f"Inventory successfully loaded from: {filename}")
                 return inventory

@@ -9,6 +9,7 @@ import soundfile as sf
 import csv
 import obspy # Import obspy
 from scipy.io import wavfile # Need to keep this import for load_wav_legacy
+from io import BytesIO
 
 # Import CaracalInventory from inventorybuilder to correctly unpickle it
 from .inventorybuilder import CaracalInventory 
@@ -422,7 +423,7 @@ class DataGetter:
         # Load the parsed syslogs from the pickled file
         try:
             with open(syslogdata_path, 'rb') as handle:
-                loaded_inventory = pickle.load(handle)
+                loaded_inventory = pickle.load(BytesIO(handle))
                 # Check if the loaded object is a CaracalInventory and extract syslog_containers
                 if isinstance(loaded_inventory, CaracalInventory):
                     self.sys: list[SyslogContainer] = loaded_inventory.syslog_containers
@@ -451,11 +452,16 @@ class DataGetter:
         else:
             print(f"INFO: Location info file not found at {locationinfo_path}. Named location queries may not work.")
 
-        if overrideinfo:
+        # Determine overrideinfo path
+        overrideinfo_path = overrideinfo if overrideinfo is not None else os.path.join(self.rootpath, "override.csv")
+
+        if os.path.exists(overrideinfo_path):
             try:
-                self.override = OverrideLoader(overrideinfo)
+                self.override = OverrideLoader(overrideinfo_path)
             except Exception as e:
-                print(f"ERROR: Could not initialize OverrideLoader with {overrideinfo}: {e}")
+                print(f"ERROR: Could not initialize OverrideLoader with {overrideinfo_path}: {e}")
+        else:
+            print(f"INFO: Override info file not found at {overrideinfo_path}. Named location queries may not work.")
 
     def __convert_datetime_to_utc_timestamp(self, dt: datetime.datetime) -> float:
         """
@@ -727,6 +733,20 @@ class DataGetter:
                                               audio_mode=self.audio_mode)
 
                 if aud is not None:
+                    # Attempt to match the audio file to the overridden location
+                    stationName = None
+                    if self.override is not None:
+                        stationName = self.override.getNameFromPath(session.path)
+                        print(f"Using override location for {session.path}: {stationName}")
+                    if (stationName is None) and (self.loc is not None):
+                        # Attempt to match the audio file's location to a named location
+                        stationName = self.loc.fromPos(lat = session.header.stats.median_GPS_lat,
+                                                         lon =session.header.stats.median_GPS_lon)
+                        print(f"Using named location for {session.path}: {stationName}")
+                        # Default
+                    if stationName is None:
+                        session.header.headerID.deviceID # Use device ID as station name by default
+                        print(f"Using device ID as station name for {session.path}: {session.header.headerID.deviceID}")
                     c = CaracalAudioData(
                         path=session.path,
                         header=session.header,
