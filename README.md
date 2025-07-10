@@ -1,5 +1,8 @@
 # caracal-python
 
+![alt text](caracal_evo_logo.png)
+
+
 Python libraries for ingesting, querying and returning data from Caracal acoustic sensors.
 
 ## Installation
