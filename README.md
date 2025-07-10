@@ -44,7 +44,7 @@ response = aGetter.load_from_latlon(lat=lat,
                             lon=lon,
                             radius=1000,
                             start_time=datetime(2024, 1, 1, 7, 5, 0),
-                            end_time=datetime(2024, 1, 1, 7, 5, 0))
+                            end_time=datetime(2024, 1, 1, 8, 25, 0))
 print("Number of stations:", len(response.stations))
 ```
 
