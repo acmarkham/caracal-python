@@ -423,7 +423,7 @@ class DataGetter:
         # Load the parsed syslogs from the pickled file
         try:
             with open(syslogdata_path, 'rb') as handle:
-                loaded_inventory = pickle.load(BytesIO(handle))
+                loaded_inventory = pickle.load(handle)
                 # Check if the loaded object is a CaracalInventory and extract syslog_containers
                 if isinstance(loaded_inventory, CaracalInventory):
                     self.sys: list[SyslogContainer] = loaded_inventory.syslog_containers
