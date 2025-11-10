@@ -617,7 +617,7 @@ class DataGetter:
 
                 if audio_mode == 'mono':
                     # Read all channels, then select the mono index
-                    audio_section = track.read(frames_to_read, dtype='int16') # Read as int16, then convert if needed
+                    audio_section = track.read(frames_to_read)
                     # Ensure it's 2D if original is multi-channel, then squeeze
                     if audio_section.ndim > 1:
                         audio_data = np.squeeze(audio_section[:, DataGetter.CH_MONO_IDX])
