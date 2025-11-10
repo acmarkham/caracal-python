@@ -754,7 +754,7 @@ class DataGetter:
                         print(f"Using named location for {session.path}: {stationName}")
                         # Default
                     if stationName is None:
-                        session.header.headerID.deviceID # Use device ID as station name by default
+                        stationName = session.header.headerID.deviceID # Use device ID as station name by default
                         print(f"Using device ID as station name for {session.path}: {session.header.headerID.deviceID}")
                     c = CaracalAudioData(
                         path=session.path,
@@ -764,7 +764,7 @@ class DataGetter:
                         UTCEnd=int(segment_end_utc),
                         sampleRate=sr,
                         audioData=aud,
-                        stationName=session.header.headerID.deviceID # Use device ID as station name by default
+                        stationName=stationName # Use device ID as station name by default
                     )
                     matching_audio_data_list.append(c)
             except Exception as e:
