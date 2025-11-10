@@ -11,12 +11,16 @@ import obspy # Import obspy
 from scipy.io import wavfile # Need to keep this import for load_wav_legacy
 from io import BytesIO
 
+from pathlib import Path # For path ninja across windows/linux/mac
+
 # Import CaracalInventory from inventorybuilder to correctly unpickle it
 from .inventorybuilder import CaracalInventory 
 from .syslogparser import Identity, Stats, AudioFile, Header, Session, SyslogContainer
 from .position import NamedLocation, NamedLocationLoader, OverrideLoader
 
 import traceback
+
+
 
 
 # Container for multiple audio data returns
@@ -568,6 +572,10 @@ class DataGetter:
             new_dat[idx,:] = [ch_a,ch_b,ch_d,ch_c]
             gain_array[idx] = gain
         return new_dat,gain_array
+    
+    @staticmethod
+    def normalize_path(path_str):
+        return Path(str(path_str).replace('\\','/').expanduser().resolve()) 
 
     @staticmethod
     def load_wav(filename: str, start_offset: float | None = None,
@@ -596,11 +604,12 @@ class DataGetter:
         """
         if duration is None:
             raise ValueError("Need a duration to load audio.")
+        cleaned_filename = DataGetter.normalize_path(filename)
 
         try:
-            with sf.SoundFile(filename, 'r') as track:
+            with sf.SoundFile(cleaned_filename, 'r') as track:
                 if not track.seekable():
-                    raise ValueError(f"Audio file '{filename}' is not seekable.")
+                    raise ValueError(f"Audio file '{cleaned_filename}' is not seekable.")
                 sr = track.samplerate
                 start_frame = int((start_offset or 0) * sr)
                 frames_to_read = int(sr * duration)
@@ -626,7 +635,7 @@ class DataGetter:
                 else:
                     raise ValueError("Audio mode must be 'mono' or 'quad'")
         except Exception as e:
-            print(f"Failed to load WAV file '{filename}': {e}")
+            print(f"Failed to load WAV file '{cleaned_filename}': {e}")
             traceback.print_exc()
             raise
 
