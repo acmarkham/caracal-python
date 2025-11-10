@@ -575,7 +575,7 @@ class DataGetter:
     
     @staticmethod
     def normalize_path(path_str):
-        return Path(str(path_str).replace('\\','/').expanduser().resolve()) 
+        return Path(str(path_str).replace('\\','/')).expanduser().resolve()
 
     @staticmethod
     def load_wav(filename: str, start_offset: float | None = None,
