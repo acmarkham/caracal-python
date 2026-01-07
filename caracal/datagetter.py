@@ -397,7 +397,7 @@ class DataGetter:
             timezone (str): Timezone string (ZoneInfo code, e.g., "America/New_York").
                             Used to convert naive datetimes to aware timestamps. Defaults to "UTC".
             audio_mode (str): Specifies the audio channel mode. 'mono' for single channel,
-                              quad' for four channels. Defaults to 'mono'.
+                              quad' for four channels or 'stacked' for all channels averaged. Defaults to 'mono'.
             overrideinfo (str, optional): Path to a CSV file for overriding semantic/surveyed locations.
                                           Used by OverrideLoader. Defaults to None.
             merge (bool): If True, will attempt to merge contiguous audio segments from the same station e.g. if they span an hourly boundary. This does remove detailed timing information.
@@ -412,8 +412,8 @@ class DataGetter:
         self.merge = merge
         self.GPS_THRESHOLD = gps_threshold # Set GPS threshold
 
-        if audio_mode not in ['mono', 'quad']:
-            raise ValueError("Audio mode must be 'mono' or 'quad'")
+        if audio_mode not in ['mono', 'quad','stacked']:
+            raise ValueError("Audio mode must be 'mono', 'quad' or 'stacked'")
         self.audio_mode = audio_mode
         print(f"DataGetter: Audio Mode set to {self.audio_mode}")
 
@@ -617,13 +617,13 @@ class DataGetter:
 
                 if audio_mode == 'mono':
                     # Read all channels, then select the mono index
-                    audio_section = track.read(frames_to_read)
-                    # Ensure it's 2D if original is multi-channel, then squeeze
-                    if audio_section.ndim > 1:
-                        audio_data = np.squeeze(audio_section[:, DataGetter.CH_MONO_IDX])
-                    else:
-                        audio_data = audio_section
-                    return sr, audio_data
+                    # explicit int32 for bit manipulation
+                    audio_section = track.read(frames_to_read,dtype='int32')
+                    quad_audio, gain = DataGetter.__vectorized_unpack(audio_section)
+                    # scaling back to float64 [-1,1] range
+                    audio_float = np.array(quad_audio).astype(np.float64)
+                    audio_scaled = quad_audio/2**31
+                    return sr,audio_scaled[:, DataGetter.CH_MONO_IDX]
                 elif audio_mode == 'quad':
                     # explicit int32 for bit manipulation
                     audio_section = track.read(frames_to_read,dtype='int32')
@@ -632,8 +632,18 @@ class DataGetter:
                     audio_float = np.array(quad_audio).astype(np.float64)
                     audio_scaled = quad_audio/2**31
                     return sr,audio_scaled
+                elif audio_mode == 'stacked':
+                    # explicit int32 for bit manipulation
+                    audio_section = track.read(frames_to_read,dtype='int32')
+                    quad_audio, gain = DataGetter.__vectorized_unpack(audio_section)
+                    # scaling back to float64 [-1,1] range
+                    audio_float = np.array(quad_audio).astype(np.float64)
+                    audio_scaled = quad_audio/2**31
+                    # Stack channels vertically (and average)
+                    stacked_audio = np.sum(audio_scaled,axis=1)/4.0
+                    return sr,stacked_audio
                 else:
-                    raise ValueError("Audio mode must be 'mono' or 'quad'")
+                    raise ValueError("Audio mode must be 'mono','quad'or'stacked'")
         except Exception as e:
             print(f"Failed to load WAV file '{cleaned_filename}': {e}")
             traceback.print_exc()
