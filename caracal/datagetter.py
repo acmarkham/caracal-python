@@ -1145,3 +1145,22 @@ class DataGetter:
             end_time,
             radius
         )
+    
+    def audioFileToMeta(self, filename: str) -> AudioFile | None:
+        """
+        Retrieves metadata for a specific audio file based on its filename. This can be useful for path-matching e.g. for mapping embeddings back to session metadata.
+
+        Args:
+            filename (str): The full path or subpath of the audio file.
+        Returns:
+            AudioFile | None: The corresponding AudioFile object if found, else None.
+        """
+        cleaned_filename = filename.replace('\\', '/')
+        for syslog_container in self.sys:
+            for session in syslog_container.sessions:
+                for audiofile in session.audioFiles:
+                    full_audiofile_path = os.path.join(self.rootpath, session.path, audiofile.subpath).replace('\\', '/')
+                    if cleaned_filename == full_audiofile_path or cleaned_filename == audiofile.subpath:
+                        return audiofile
+        print(f"Audio file metadata not found for: {cleaned_filename}")
+        return None
